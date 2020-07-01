@@ -39,8 +39,7 @@ private:
 	std::vector<std::thread> threadList;
 };
 
-ThreadPool::ThreadPool(int _threadNum)
-	: threadNum(1), stop(false), suspend(false), threadState(0)
+ThreadPool::ThreadPool() : threadNum(1), stop(false), suspend(false), threadState(0)
 {
 }
 
@@ -53,11 +52,11 @@ void ThreadPool::start(int _threadNum)
 		{
 			std::function<void()> task;
 			{
-				std::unique_lock<std::mutex> lock(this->taskMutex);
-				this->cv.wait(lock, [this] {return this->stop || (!this->suspend && !this->taskQueue.empty()); });
-				if (this->stop && this->taskQueue.empty()) return;
+				std::unique_lock<std::mutex> lock(taskMutex);
+				cv.wait(lock, [this] {return stop || (!suspend && !taskQueue.empty()); });
+				if (stop && taskQueue.empty()) return;
 				task = std::move(taskQueue.front());
-				this->taskQueue.pop();
+				taskQueue.pop();
 			}
 			threadState |= (1 << id);
 			task();
@@ -81,27 +80,27 @@ ThreadPool::~ThreadPool()
 	}
 }
 
-inline void ThreadPool::pause()
+void ThreadPool::pause()
 {
 	suspend = true;
 }
 
-inline void ThreadPool::resume()
+void ThreadPool::resume()
 {
 	suspend = false;
 	cv.notify_all();
 }
 
-inline void ThreadPool::shutdown()
+void ThreadPool::shutdown()
 {
 	stop = true;
 	cv.notify_all();
 }
 
-inline void ThreadPool::waitAllFinish()
+void ThreadPool::waitAllFinish()
 {
 	std::unique_lock<std::mutex> lock(taskMutex);
-	cvFinish.wait(lock, [this] { return !this->threadState && this->taskQueue.empty(); });
+	cvFinish.wait(lock, [this] { return !threadState && taskQueue.empty(); });
 }
 
 bool ThreadPool::isTaskQueueEmpty()
