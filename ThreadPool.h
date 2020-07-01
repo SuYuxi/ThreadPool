@@ -6,16 +6,20 @@
 #include <future>
 #include <queue>
 #include <memory>
+#include <atomic>
 
 class ThreadPool {
 public:
-	ThreadPool(int _threadNum = 4);
+	ThreadPool();
 	~ThreadPool();
-
+	
+	void start(int _threadNum = 4);
 	void pause();
 	void resume();
 	void shutdown();
 	void waitAllFinish();
+	bool isTaskQueueEmpty();
+	void cleanTasks();
 
 	template<class Func, class... Args>
 	auto add(Func&& func, Args&& ...args)
@@ -23,20 +27,27 @@ public:
 
 private:
 	int threadNum;
-	bool suspend;
-	bool stop;
-	int32_t threadState; // bit 1 means thread is in use, bit 0 means thread is idle.
+	std::atomic<bool> suspend;
+	std::atomic<bool> stop;
+	std::atomic<int32_t> threadState; // bit 1 means thread is in use, bit 0 means thread is idle.
 
 	std::mutex taskMutex;
 	std::condition_variable cv;
+	std::condition_variable cvFinish;
 
 	std::queue<std::function<void()>> taskQueue;
 	std::vector<std::thread> threadList;
 };
 
 ThreadPool::ThreadPool(int _threadNum)
-	: threadNum(_threadNum), stop(false), suspend(false), threadState(0)
+	: threadNum(1), stop(false), suspend(false), threadState(0)
 {
+}
+
+void ThreadPool::start(int _threadNum)
+{
+	if (_threadNum > 32) throw std::runtime_error("ThreadNum should be less than or equal to 32");
+	threadNum = _threadNum;
 	std::function<void(int)> threadFunc = [this](int id) {
 		while (true)
 		{
@@ -51,7 +62,7 @@ ThreadPool::ThreadPool(int _threadNum)
 			threadState |= (1 << id);
 			task();
 			threadState &= ~(1 << id);
-			cv.notify_one();
+			if(!threadState) cvFinish.notify_one();
 		}
 	};
 	for (int i = 0; i < threadNum; ++i)
@@ -90,7 +101,22 @@ inline void ThreadPool::shutdown()
 inline void ThreadPool::waitAllFinish()
 {
 	std::unique_lock<std::mutex> lock(taskMutex);
-	cv.wait(lock, [this] { return !this->threadState && this->taskQueue.empty(); });
+	cvFinish.wait(lock, [this] { return !this->threadState && this->taskQueue.empty(); });
+}
+
+bool ThreadPool::isTaskQueueEmpty()
+{
+	std::lock_guard<std::mutex> lock(taskMutex);
+	return taskQueue.empty();
+}
+
+void ThreadPool::cleanTasks()
+{
+	std::lock_guard<std::mutex> lock(taskMutex);
+	while (!taskQueue.empty())
+	{
+		taskQueue.pop();
+	}
 }
 
 template<class Func, class... Args>
