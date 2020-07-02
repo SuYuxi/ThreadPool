@@ -76,7 +76,7 @@ ThreadPool::~ThreadPool()
 	cv.notify_all();
 	for (std::thread& t : threadList)
 	{
-		t.join();
+		if(t.joinable()) t.join();
 	}
 }
 
